@@ -29,14 +29,19 @@ with st.sidebar:
             ingest()
         st.success("Documents ingested successfully!")
 
-# --- Chat ---
+# --- Session State ---                              # ← ADD THIS BLOCK
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+if "thread_id" not in st.session_state:             # ← ADD THIS
+    st.session_state.thread_id = "user_session_1"   # ← ADD THIS
+
+# --- Chat History ---
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
+# --- Chat Input ---
 if prompt := st.chat_input("Ask a question about your documents..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -44,7 +49,7 @@ if prompt := st.chat_input("Ask a question about your documents..."):
 
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
-            answer = run_agent(prompt)
+            answer = run_agent(prompt, thread_id=st.session_state.thread_id)  # ← UPDATED
         st.markdown(answer)
 
     st.session_state.messages.append({"role": "assistant", "content": answer})

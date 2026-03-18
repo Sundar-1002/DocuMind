@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from typing import TypedDict, List, Union
 from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
+from langgraph.checkpoint.memory import MemorySaver
 from langchain_community.vectorstores import Chroma
 from langchain_groq import ChatGroq
 from langgraph.graph import StateGraph, START, END
@@ -52,12 +53,13 @@ def build_graph():
     graph.add_edge(START, "retrieve_documents")
     graph.add_edge("retrieve_documents", "respond")
     graph.add_edge("respond", END)
-    return graph.compile()
+    return graph.compile(checkpointer=MemorySaver())
 
 agent = build_graph()
 
-def run_agent(query: str) -> str:
-    result = agent.invoke({"query": query})
+def run_agent(query: str, thread_id: str = "default") -> str:
+    config = {"configurable": {"thread_id": thread_id}}
+    result = agent.invoke({"query": query}, config=config)
     return result["answer"]
 
 if __name__ == "__main__":
