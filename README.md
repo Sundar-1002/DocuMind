@@ -61,7 +61,7 @@ User Question
 **1. Clone the repository**
 
 ```bash
-git clone https://github.com/yourusername/DocuMind.git
+git clone https://github.com/Sundar-1002/DocuMind.git
 cd DocuMind
 ```
 
