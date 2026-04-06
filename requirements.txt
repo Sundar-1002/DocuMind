@@ -11,3 +11,11 @@ pypdf
 google-generativeai 
 sentence-transformers
 langchain-huggingface
+fastapi
+uvicorn[standard]
+cryptography
+pymysql
+sqlalchemy
+strawberry-graphql[fastapi]
+langsmith
+openai

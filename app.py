@@ -1,12 +1,69 @@
-import os
 import streamlit as st
-from ingest import ingest
-from agent import run_agent
+import requests
+import json
+
+API_URL = "http://localhost:8000/graphql"
 
 st.set_page_config(page_title="DocuMind", page_icon="📄", layout="wide")
 
 st.title("📄 DocuMind")
 st.caption("Upload your PDFs and ask questions about them.")
+
+
+# --- Helper: send GraphQL mutation ---
+def ask_question(question: str) -> str:
+    query = """
+        mutation($question: MessageInput!) {
+            ask(question: $question) {
+                role
+                content
+            }
+        }
+    """
+    response = requests.post(
+        API_URL,
+        json={
+            "query": query,
+            "variables": {
+                "question": {
+                    "role": "user",
+                    "content": question
+                }
+            }
+        }
+    )
+    data = response.json()
+    return data["data"]["ask"]["content"]
+
+
+def upload_documents(uploaded_files) -> str:
+    # multipart upload for GraphQL file upload spec
+    operations = json.dumps({
+        "query": """
+            mutation($files: [Upload!]!) {
+                uploadDocuments(files: $files)
+            }
+        """,
+        "variables": {
+            "files": [None] * len(uploaded_files)
+        }
+    })
+
+    # map each file to its position in the variables array
+    file_map = json.dumps({
+        str(i): [f"variables.files.{i}"]
+        for i in range(len(uploaded_files))
+    })
+
+    # build multipart form
+    files = {"operations": (None, operations), "map": (None, file_map)}
+    for i, f in enumerate(uploaded_files):
+        files[str(i)] = (f.name, f.getbuffer(), "application/pdf")
+
+    response = requests.post(API_URL, files=files)
+    data = response.json()
+    return data["data"]["uploadDocuments"]
+
 
 # --- Sidebar: PDF Upload ---
 with st.sidebar:
@@ -17,29 +74,22 @@ with st.sidebar:
         accept_multiple_files=True
     )
 
-    if uploaded_files:
-        os.makedirs("data", exist_ok=True)
-        for file in uploaded_files:
-            with open(os.path.join("data", file.name), "wb") as f:
-                f.write(file.getbuffer())
-        st.success(f"{len(uploaded_files)} file(s) uploaded to data/")
+    if uploaded_files and st.button("Upload & Ingest", use_container_width=True):
+        with st.spinner("Uploading and ingesting documents..."):
+            message = upload_documents(uploaded_files)
+        st.success(message)
 
-    if st.button("Ingest Documents", use_container_width=True):
-        with st.spinner("Ingesting documents into ChromaDB..."):
-            ingest()
-        st.success("Documents ingested successfully!")
 
-# --- Session State ---                              # ← ADD THIS BLOCK
+# --- Session State ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-if "thread_id" not in st.session_state:             # ← ADD THIS
-    st.session_state.thread_id = "user_session_1"   # ← ADD THIS
 
 # --- Chat History ---
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+
 
 # --- Chat Input ---
 if prompt := st.chat_input("Ask a question about your documents..."):
@@ -49,7 +99,7 @@ if prompt := st.chat_input("Ask a question about your documents..."):
 
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
-            answer = run_agent(prompt, thread_id=st.session_state.thread_id)  # ← UPDATED
+            answer = ask_question(prompt)
         st.markdown(answer)
 
     st.session_state.messages.append({"role": "assistant", "content": answer})
