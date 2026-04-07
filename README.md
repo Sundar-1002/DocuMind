@@ -14,13 +14,14 @@ DocuMind is a RAG-powered research agent built with LangGraph and LangChain that
 
 ## 🚀 Features
 
-- 📁 Upload multiple PDFs directly from the browser
+- 📁 Upload multiple PDFs via GraphQL file upload spec
 - 🔍 Semantic search over document chunks using ChromaDB
 - 🤖 LangGraph stateful agent with retriever, responder, and critic nodes
-- 🔁 Self-correction loop — critic re-routes low-confidence answers back to responder
+- 🔁 Self-correction loop — critic re-routes low-confidence answers back to responder with feedback
 - 💬 Multi-turn conversation memory using LangGraph's `MemorySaver`
 - 📄 Cited answers with source filenames
-- 🖥️ Clean Streamlit UI with chat interface
+- ⚡ FastAPI + Strawberry GraphQL backend
+- 🖥️ Streamlit frontend communicating with the backend via GraphQL mutations
 - 📊 LangSmith observability and evaluation integration
 
 ---
@@ -28,15 +29,20 @@ DocuMind is a RAG-powered research agent built with LangGraph and LangChain that
 ## 🏗️ Architecture
 
 ```
-User Question
-      ↓
- LangGraph Agent
-  ├── Retrieve Node   → ChromaDB semantic search (HuggingFace embeddings)
-  ├── Respond Node    → Llama 3.1 via Groq API (cited answer)
-  └── Critic Node     → Verifies answer quality and groundedness
-        ↓
-  Confidence HIGH → Return answer to user
-  Confidence LOW  → Route back to Respond (max 2 retries with critic feedback)
+Streamlit UI  →  GraphQL Mutation  →  FastAPI + Strawberry  →  LangGraph Agent
+                                                                      ↓
+                                                             Retrieve Node
+                                                             (ChromaDB semantic search)
+                                                                      ↓
+                                                             Respond Node
+                                                             (Llama 3.1 via Groq)
+                                                                      ↓
+                                                             Critic Node
+                                                             (verify groundedness)
+                                                                      ↓
+                                                    Confidence HIGH → return answer
+                                                    Confidence LOW  → retry respond
+                                                                      (max 2 retries)
 ```
 
 ---
@@ -49,9 +55,10 @@ User Question
 | LLM | Llama 3.1 8B via Groq API |
 | Vector Database | ChromaDB |
 | Embeddings | HuggingFace `all-MiniLM-L6-v2` |
-| PDF Parsing | LangChain PyPDFDirectoryLoader |
+| PDF Parsing | LangChain `PyPDFDirectoryLoader` |
+| API Layer | FastAPI + Strawberry GraphQL |
 | UI | Streamlit |
-| Observability | LangSmith |
+| Observability & Evaluation | LangSmith |
 | Language | Python 3.11 |
 
 ---
@@ -61,7 +68,7 @@ User Question
 **1. Clone the repository**
 
 ```bash
-git clone https://github.com/yourusername/DocuMind.git
+git clone https://github.com/Sundar-1002/DocuMind.git
 cd DocuMind
 ```
 
@@ -107,7 +114,8 @@ DocuMind/
 ├── chroma_db/                     ← Auto-generated vector store
 ├── ingest.py                      ← PDF loading, chunking, embedding pipeline
 ├── agent.py                       ← LangGraph agent graph with critic node
-├── app.py                         ← Streamlit UI
+├── api.py                         ← FastAPI + Strawberry GraphQL server
+├── app.py                         ← Streamlit UI (GraphQL client)
 ├── evaluate.py                    ← LangSmith evaluation pipeline
 ├── requirements.txt
 └── .env
@@ -125,22 +133,53 @@ Place PDF files in the `data/` folder, then run:
 python ingest.py
 ```
 
-Or use the **Ingest Documents** button directly in the UI.
+**Step 2 — Start the GraphQL API server**
 
-**Step 2 — Run the app**
+```bash
+uvicorn api:app --reload
+```
+
+The GraphQL API will be available at `http://localhost:8000/graphql`
+
+**Step 3 — Run the Streamlit UI**
 
 ```bash
 streamlit run app.py
 ```
 
-**Step 3 — Ask questions**
+Open `http://localhost:8501` in your browser.
 
-Open `http://localhost:8501` in your browser, upload PDFs, and start chatting!
+**Step 4 — Upload PDFs and ask questions**
 
-**Step 4 — Run evaluation (optional)**
+Use the sidebar to upload PDFs — they are ingested via the `uploadDocuments` GraphQL mutation. Ask questions in the chat — they are processed via the `ask` GraphQL mutation.
+
+**Step 5 — Run evaluation (optional)**
 
 ```bash
 python evaluate.py
+```
+
+---
+
+## 🔌 GraphQL API
+
+The API exposes two mutations at `http://localhost:8000/graphql`:
+
+**Ask a question:**
+```graphql
+mutation($question: MessageInput!) {
+  ask(question: $question) {
+    role
+    content
+  }
+}
+```
+
+**Upload and ingest documents:**
+```graphql
+mutation($files: [Upload!]!) {
+  uploadDocuments(files: $files)
+}
 ```
 
 ---
@@ -150,7 +189,6 @@ python evaluate.py
 ```
 langchain
 langchain-community
-langchain-google-genai
 langchain-huggingface
 langchain-chroma
 langchain-groq
@@ -160,9 +198,12 @@ chromadb
 streamlit
 pypdf
 sentence-transformers
-google-generativeai
 python-dotenv
 langsmith
+fastapi
+strawberry-graphql
+uvicorn
+requests
 ```
 
 ---
@@ -172,11 +213,17 @@ langsmith
 **Ingestion Pipeline (`ingest.py`)**
 PDFs are loaded page by page using `PyPDFDirectoryLoader`, split into 1000-character chunks with 200-character overlap using `RecursiveCharacterTextSplitter`, embedded using HuggingFace's `all-MiniLM-L6-v2` model, and persisted locally in ChromaDB.
 
+**GraphQL API (`api.py`)**
+A FastAPI server with Strawberry GraphQL exposes two mutations — `uploadDocuments` handles PDF file uploads using the GraphQL multipart upload spec and triggers ingestion, and `ask` receives a user message and routes it through the LangGraph agent.
+
 **Agent Graph (`agent.py`)**
 A LangGraph `StateGraph` with three nodes — `retrieve_documents` performs semantic similarity search against ChromaDB returning the top 4 relevant chunks, `respond` builds a prompt with the retrieved context and invokes Llama 3.1 via Groq to generate a cited answer, and `critic` verifies whether the answer is grounded in the retrieved documents. If confidence is LOW, the critic's feedback is passed back to the responder for a retry (max 2 retries). Conversation memory is maintained across turns using `MemorySaver`.
 
+**Streamlit UI (`app.py`)**
+A Streamlit frontend that communicates with the FastAPI backend exclusively via GraphQL mutations using the `requests` library. PDF uploads use the GraphQL multipart file upload spec.
+
 **Evaluation Pipeline (`evaluate.py`)**
-A LangSmith evaluation pipeline that runs the agent against a dataset of 10 question-answer pairs and logs latency, token usage, and answer quality to LangSmith.
+A LangSmith evaluation pipeline that runs the agent against a dataset of 10 domain-specific question-answer pairs and logs latency, token usage, and answer quality per run.
 
 ---
 
